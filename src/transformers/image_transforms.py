@@ -148,7 +148,8 @@ def _rescale_for_pil_conversion(image):
         do_rescale = True
     else:
         raise ValueError(
-            "The image to be converted to a PIL image contains values outside the range [0, 1], "
+            "The image to be converted to a PIL image must contain integer values in the range [0, 255] or "
+            "float values in the range [0, 1], "
             f"got [{image.min()}, {image.max()}] which cannot be converted to uint8."
         )
     return do_rescale

@@ -97,6 +97,13 @@ class ImageTransformsTester(unittest.TestCase):
             to_pil_image(image)
 
     @require_vision
+    def test_to_pil_image_from_non_integer_float_in_255_range(self):
+        # Non-integer floats in [0, 255] are rejected; the error must state the accepted contracts.
+        image = np.full((3, 4, 5), 128.5, dtype=np.float32)
+        with self.assertRaisesRegex(ValueError, r"integer values in the range \[0, 255\]"):
+            to_pil_image(image)
+
+    @require_vision
     def test_to_pil_image_from_mask(self):
         # Make sure binary mask remains a binary mask
         image = np.random.randint(0, 2, (3, 4, 5)).astype(np.uint8)
