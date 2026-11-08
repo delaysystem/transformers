@@ -370,6 +370,19 @@ class TestTrainingArguments(unittest.TestCase):
         args = TrainingArguments(output_dir="tmp", warmup_steps=0.5, report_to=None)
         self.assertEqual(args.warmup_steps, 0.5)
 
+    def test_adam_epsilon_must_be_positive(self):
+        """Test adam_epsilon validation: zero/negative values silently produce NaN parameters."""
+        with self.assertRaisesRegex(ValueError, r"adam_epsilon"):
+            TrainingArguments(output_dir="tmp", adam_epsilon=0, report_to=None)
+        with self.assertRaisesRegex(ValueError, r"adam_epsilon"):
+            TrainingArguments(output_dir="tmp", adam_epsilon=-1e-8, report_to=None)
+
+        # Default and small positive values are valid
+        args = TrainingArguments(output_dir="tmp", report_to=None)
+        self.assertEqual(args.adam_epsilon, 1e-8)
+        args = TrainingArguments(output_dir="tmp", adam_epsilon=1e-12, report_to=None)
+        self.assertEqual(args.adam_epsilon, 1e-12)
+
     def test_debug_option_parsing(self):
         """Test debug string parsing into DebugOption enum list."""
         args = TrainingArguments(output_dir="tmp", debug="underflow_overflow", report_to=None)

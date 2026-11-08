@@ -248,7 +248,8 @@ class TrainingArguments:
             optimizers. Controls adaptive learning rate scaling.
         adam_epsilon (`float`, *optional*, defaults to 1e-8):
             Epsilon value for numerical stability in Adam-based optimizers. Prevents division by
-            zero in the denominator of the update rule.
+            zero in the denominator of the update rule. Must be positive: a zero or negative
+            value silently produces NaN parameters.
         optim_target_modules (`Union[str, list[str]]`, *optional*):
             The target modules to optimize, i.e. the module names that you would like to train.
             Currently used for the [GaLore algorithm](https://huggingface.co/papers/2403.03507) and [APOLLO algorithm](https://huggingface.co/papers/2412.05270).
@@ -1804,6 +1805,12 @@ class TrainingArguments:
             raise ValueError(
                 "--dataloader_prefetch_factor can only be set when data is loaded in a different process, i.e."
                 " when --dataloader_num_workers > 0."
+            )
+
+        if self.adam_epsilon <= 0:
+            raise ValueError(
+                f"Got adam_epsilon = {self.adam_epsilon}, expected a positive value. A zero or negative epsilon "
+                "silently produces NaN parameters in Adam-based optimizers."
             )
 
     def __str__(self):
