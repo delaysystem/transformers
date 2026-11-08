@@ -32,6 +32,18 @@ from .utils import logging
 logger = logging.get_logger(__name__)
 
 
+def _check_warmup_steps(num_warmup_steps: int, num_training_steps: int):
+    """
+    Reject warmup phases that cover the whole run: with no decay phase left, the learning rate would ramp up for
+    the entire run and never decay, silently mistraining the model.
+    """
+    if num_warmup_steps >= num_training_steps:
+        raise ValueError(
+            f"`num_warmup_steps` ({num_warmup_steps}) must be smaller than `num_training_steps` "
+            f"({num_training_steps}): otherwise the learning rate only warms up and never decays."
+        )
+
+
 def _get_constant_lambda(_=None):
     return 1
 
@@ -123,6 +135,7 @@ def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_st
         `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.
     """
 
+    _check_warmup_steps(num_warmup_steps, num_training_steps)
     lr_lambda = partial(
         _get_linear_schedule_with_warmup_lr_lambda,
         num_warmup_steps=num_warmup_steps,
@@ -165,6 +178,7 @@ def get_cosine_schedule_with_warmup(
         `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.
     """
 
+    _check_warmup_steps(num_warmup_steps, num_training_steps)
     lr_lambda = partial(
         _get_cosine_schedule_with_warmup_lr_lambda,
         num_warmup_steps=num_warmup_steps,
@@ -209,6 +223,7 @@ def get_cosine_with_hard_restarts_schedule_with_warmup(
         `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.
     """
 
+    _check_warmup_steps(num_warmup_steps, num_training_steps)
     lr_lambda = partial(
         _get_cosine_with_hard_restarts_schedule_with_warmup_lr_lambda,
         num_warmup_steps=num_warmup_steps,
@@ -274,6 +289,7 @@ def get_polynomial_decay_schedule_with_warmup(
     if not (lr_init > lr_end):
         raise ValueError(f"lr_end ({lr_end}) must be smaller than initial lr ({lr_init})")
 
+    _check_warmup_steps(num_warmup_steps, num_training_steps)
     lr_lambda = partial(
         _get_polynomial_decay_schedule_with_warmup_lr_lambda,
         num_warmup_steps=num_warmup_steps,
@@ -376,6 +392,7 @@ def get_cosine_with_min_lr_schedule_with_warmup(
     elif min_lr_rate is None:
         raise ValueError("One of min_lr or min_lr_rate should be set through the `lr_scheduler_kwargs`")
 
+    _check_warmup_steps(num_warmup_steps, num_training_steps)
     lr_lambda = partial(
         _get_cosine_schedule_with_warmup_lr_lambda,
         num_warmup_steps=num_warmup_steps,
@@ -456,6 +473,7 @@ def get_cosine_with_min_lr_schedule_with_warmup_lr_rate(
     elif min_lr_rate is None:
         raise ValueError("One of min_lr or min_lr_rate should be set through the `lr_scheduler_kwargs`")
 
+    _check_warmup_steps(num_warmup_steps, num_training_steps)
     lr_lambda = partial(
         _get_cosine_with_min_lr_schedule_with_warmup_lr_rate_lambda,
         num_warmup_steps=num_warmup_steps,
@@ -564,6 +582,13 @@ def get_wsd_schedule(
 
     if num_stable_steps is None:
         num_stable_steps = num_training_steps - num_warmup_steps - num_decay_steps
+
+    if num_stable_steps < 0:
+        raise ValueError(
+            f"Got a negative stable phase ({num_stable_steps} steps): `num_warmup_steps` ({num_warmup_steps}) "
+            f"plus `num_decay_steps` ({num_decay_steps}) exceeds the run length, so the stable phase would be "
+            "silently skipped."
+        )
 
     lr_lambda = partial(
         _get_wsd_scheduler_lambda,

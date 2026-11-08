@@ -31,6 +31,8 @@ if is_torch_available():
         get_constant_schedule_with_warmup,
         get_cosine_schedule_with_warmup,
         get_cosine_with_hard_restarts_schedule_with_warmup,
+        get_cosine_with_min_lr_schedule_with_warmup,
+        get_cosine_with_min_lr_schedule_with_warmup_lr_rate,
         get_inverse_sqrt_schedule,
         get_linear_schedule_with_warmup,
         get_polynomial_decay_schedule_with_warmup,
@@ -215,6 +217,43 @@ class ScheduleInitTest(unittest.TestCase):
 
         for param in test_params:
             self.assertTrue(get_scheduler(**param), msg=f"failed for {param['name']} in get_scheduler")
+
+    def test_warmup_must_be_shorter_than_run(self):
+        """Warmup covering the whole run would ramp the LR up and never decay; it must raise."""
+        scheds = [
+            get_linear_schedule_with_warmup,
+            get_cosine_schedule_with_warmup,
+            get_cosine_with_hard_restarts_schedule_with_warmup,
+            get_polynomial_decay_schedule_with_warmup,
+            get_cosine_with_min_lr_schedule_with_warmup,
+            get_cosine_with_min_lr_schedule_with_warmup_lr_rate,
+        ]
+        for scheduler_func in scheds:
+            kwargs = {"num_warmup_steps": 10, "num_training_steps": 5}
+            if "min_lr" in scheduler_func.__name__:
+                kwargs["min_lr_rate"] = 0.1
+            with self.assertRaises(ValueError, msg=f"failed for {scheduler_func}"):
+                scheduler_func(self.optimizer, **kwargs)
+            # Equal lengths leave no decay phase either.
+            kwargs["num_warmup_steps"] = 5
+            with self.assertRaises(ValueError, msg=f"failed for {scheduler_func}"):
+                scheduler_func(self.optimizer, **kwargs)
+            # Boundary value (one decay step) stays valid.
+            kwargs["num_warmup_steps"] = 4
+            self.assertIsNotNone(scheduler_func(self.optimizer, **kwargs))
+
+    def test_wsd_rejects_negative_stable_phase(self):
+        """Warmup + decay longer than the run would silently skip the WSD stable phase."""
+        with self.assertRaises(ValueError):
+            get_wsd_schedule(
+                self.optimizer, num_warmup_steps=6, num_decay_steps=6, num_training_steps=10, min_lr_ratio=0.0
+            )
+        # Exact fit (zero stable steps) stays valid.
+        self.assertIsNotNone(
+            get_wsd_schedule(
+                self.optimizer, num_warmup_steps=5, num_decay_steps=5, num_training_steps=10, min_lr_ratio=0.0
+            )
+        )
 
 
 class LambdaScheduleWrapper:
