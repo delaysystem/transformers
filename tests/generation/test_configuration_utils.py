@@ -347,6 +347,111 @@ class GenerationConfigTest(unittest.TestCase):
         # 7. User sets BOTH `num_beams=1` and `length_penalty=0.8` explicitly -> WARN.
         self.assertNotEqual(_warn_count(lambda: GenerationConfig(num_beams=1, length_penalty=0.8)), 0)
 
+    def test_validate_sampling_ranges_fatal(self):
+        """
+        Out-of-range sampling parameters that would crash `generate()` raise eagerly in sampling mode. Each bound
+        mirrors the runtime `LogitsProcessor` check and the gate that instantiates it in `_get_logits_processor`.
+        """
+        # (kwargs, valid_boundary_values): invalid values must raise with `do_sample=True`, boundary values must not.
+        cases = (
+            ("temperature", (0, 0.0, -1.0), (0.0001, 1.0, 2.0)),
+            ("top_k", (-1, -50), (0, 1, 50)),
+            ("top_p", (0, 0.0, -0.5), (0.01, 0.9, 1.0)),
+            ("min_p", (-0.1, -1.0, 1.5), (0.0, 0.1, 1.0)),
+            ("top_h", (0, 0.0, -0.5, 1.5), (0.01, 0.5, 1.0)),
+            ("typical_p", (0, -1.0), (0.01, 0.9, 1.0)),
+        )
+        for attribute, invalid_values, valid_values in cases:
+            for invalid in invalid_values:
+                with self.assertRaises(ValueError, msg=f"{attribute}={invalid} must raise in sampling mode"):
+                    GenerationConfig(do_sample=True, **{attribute: invalid})
+            for valid in valid_values:
+                GenerationConfig(do_sample=True, **{attribute: valid}).validate()
+
+    def test_validate_sampling_ranges_warn(self):
+        """
+        Range violations that would be silently ignored at runtime -- or that are out of range while sampling is
+        off -- warn instead of raising. `strict=True` escalates them to errors.
+        """
+        logger = transformers_logging.get_logger("transformers.generation.configuration_utils")
+
+        def _warn_count(fn):
+            logger.warning_once.cache_clear()
+            with CaptureLogger(logger) as captured:
+                fn()
+            return len(captured.out)
+
+        # Silently-ignored values warn even in sampling mode (never raise: nothing would crash).
+        warn_only_cases = (
+            {"top_p": 1.5},
+            {"typical_p": 2.0},
+            {"epsilon_cutoff": 1.5},
+            {"epsilon_cutoff": -0.5},
+            {"eta_cutoff": 1.0},
+            {"eta_cutoff": -1.0},
+            {"guidance_scale": 0.5},
+        )
+        for kwargs in warn_only_cases:
+            self.assertNotEqual(_warn_count(lambda: GenerationConfig(do_sample=True, **kwargs)), 0, msg=str(kwargs))
+
+        # ... but the disabled sentinels stay silent.
+        silent_cases = (
+            {"top_p": 1.0},
+            {"typical_p": 1.0},
+            {"epsilon_cutoff": 0.0},
+            {"eta_cutoff": 0.0},
+            {"guidance_scale": 1},
+        )
+        for kwargs in silent_cases:
+            self.assertEqual(_warn_count(lambda: GenerationConfig(do_sample=True, **kwargs)), 0, msg=str(kwargs))
+
+        # Out-of-range sampling values warn (not raise) when sampling is off ...
+        self.assertNotEqual(_warn_count(lambda: GenerationConfig(temperature=0)), 0)
+        self.assertNotEqual(_warn_count(lambda: GenerationConfig(do_sample=False, top_k=-1)), 0)
+        self.assertNotEqual(_warn_count(lambda: GenerationConfig(do_sample=False, top_p=0)), 0)
+        self.assertNotEqual(_warn_count(lambda: GenerationConfig(do_sample=False, min_p=2.0)), 0)
+
+        # ... and `strict=True` escalates those warnings to errors.
+        config = GenerationConfig(do_sample=True, epsilon_cutoff=1.5)
+        with self.assertRaises(ValueError):
+            config.validate(strict=True)
+        config = GenerationConfig(do_sample=False, top_p=0)
+        with self.assertRaises(ValueError):
+            config.validate(strict=True)
+
+        # The specific range message wins over the generic greedy-mode message for the same flag.
+        logger.warning_once.cache_clear()
+        logger.info_once.cache_clear()
+        with LoggingLevel(logging.INFO):
+            with CaptureLogger(logger) as captured_logs:
+                GenerationConfig(do_sample=False, temperature=0)
+        self.assertIn("strictly positive", captured_logs.out)
+
+    def test_validate_mode_independent_ranges(self):
+        """
+        `repetition_penalty`, `encoder_repetition_penalty`, `num_beams` and `num_return_sequences` are gated
+        independently of the sampling mode, so invalid values always raise -- even with sampling off or unset.
+        """
+        invalid_cases = (
+            {"repetition_penalty": 0},
+            {"repetition_penalty": -1.0},
+            {"encoder_repetition_penalty": 0.0},
+            {"encoder_repetition_penalty": -2.0},
+            {"num_beams": 0},
+            {"num_beams": -1},
+            {"num_return_sequences": 0},
+            {"num_return_sequences": -3},
+        )
+        for kwargs in invalid_cases:
+            for mode in ({}, {"do_sample": True}, {"do_sample": False}):
+                with self.assertRaises(ValueError, msg=f"{kwargs} with {mode} must raise"):
+                    GenerationConfig(**{**mode, **kwargs})
+
+        # Valid values (including the "no penalty" / "no beam search" sentinels) construct silently.
+        GenerationConfig(repetition_penalty=1.0, encoder_repetition_penalty=2.0).validate()
+        GenerationConfig(num_beams=1, num_return_sequences=1).validate()
+        GenerationConfig(do_sample=True, num_beams=4, num_return_sequences=2).validate()
+
     def test_refuse_to_save(self):
         """Tests that we refuse to save a generation config that fails validation."""
 

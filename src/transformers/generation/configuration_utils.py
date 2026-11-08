@@ -150,7 +150,7 @@ class GenerationConfig(PushToHubMixin):
         do_sample (`bool`):
             Whether or not to use sampling ; use greedy decoding otherwise.
         num_beams (`int`, *optional*):
-            Number of beams for beam search. 1 means no beam search.
+            Number of beams for beam search. 1 means no beam search. Must be at least 1.
         use_mtp: (`bool`):
             Whether or not to use Multi-Token Prediction (MTP) if the model supports it.
 
@@ -182,19 +182,19 @@ class GenerationConfig(PushToHubMixin):
         > Parameters for manipulation of the model output logits
 
         temperature (`float`, *optional*):
-            The value used to module the next token probabilities. This value is set in a model's `generation_config.json` file. If it isn't set, the default value is 1.0
+            The value used to modulate the next token probabilities. Must be strictly positive. This value is set in a model's `generation_config.json` file. If it isn't set, the default value is 1.0
         top_k (`int`, *optional*):
-            The number of highest probability vocabulary tokens to keep for top-k-filtering. This value is set in a model's `generation_config.json` file. If it isn't set, the default value is 50.
+            The number of highest probability vocabulary tokens to keep for top-k-filtering. Must be 0 (disabled) or a positive integer. This value is set in a model's `generation_config.json` file. If it isn't set, the default value is 50.
         top_p (`float`, *optional*):
             If set to float < 1, only the smallest set of most probable tokens with probabilities that add up to
-            `top_p` or higher are kept for generation. This value is set in a model's `generation_config.json` file. If it isn't set, the default value is 1.0
+            `top_p` or higher are kept for generation. Must be in the (0, 1] interval. This value is set in a model's `generation_config.json` file. If it isn't set, the default value is 1.0
         min_p (`float`, *optional*):
             Minimum token probability, which will be scaled by the probability of the most likely token. It must be a
             value between 0 and 1. Typical values are in the 0.01-0.2 range, comparably selective as setting `top_p` in
             the 0.99-0.8 range (use the opposite of normal `top_p` values).
         top_h (`float`, *optional*):
             Entropy budget scaling factor, which controls how much of the distribution’s entropy is preserved when sampling.
-            Must be a value between 0 and 1. At each step, tokens are sorted by probability, and the smallest prefix of tokens
+            Must be in the (0, 1] interval (strictly greater than 0, at most 1). At each step, tokens are sorted by probability, and the smallest prefix of tokens
             is kept whose *renormalized* entropy is less than or equal to `top_h` times the entropy of the full distribution.
             Smaller values (e.g., 0.2–0.5) lead to more focused, deterministic outputs, while values closer to 1.0 allow more
             randomness and diversity. Typical values are in the 0.3–0.6 range.
@@ -202,26 +202,26 @@ class GenerationConfig(PushToHubMixin):
             Local typicality measures how similar the conditional probability of predicting a target token next is to
             the expected conditional probability of predicting a random token next, given the partial text already
             generated. If set to float < 1, the smallest set of the most locally typical tokens with probabilities that
-            add up to `typical_p` or higher are kept for generation. See [this
+            add up to `typical_p` or higher are kept for generation. Must be in the (0, 1] interval. See [this
             paper](https://huggingface.co/papers/2202.00666) for more details.
         epsilon_cutoff (`float`, *optional*):
             If set to float strictly between 0 and 1, only tokens with a conditional probability greater than
             `epsilon_cutoff` will be sampled. In the paper, suggested values range from 3e-4 to 9e-4, depending on the
-            size of the model. See [Truncation Sampling as Language Model
+            size of the model. Values outside [0, 1) are ignored and flagged by `validate()`. See [Truncation Sampling as Language Model
             Desmoothing](https://huggingface.co/papers/2210.15191) for more details.
         eta_cutoff (`float`, *optional*):
             Eta sampling is a hybrid of locally typical sampling and epsilon sampling. If set to float strictly between
             0 and 1, a token is only considered if it is greater than either `eta_cutoff` or `sqrt(eta_cutoff) *
             exp(-entropy(softmax(next_token_logits)))`. The latter term is intuitively the expected next token
             probability, scaled by `sqrt(eta_cutoff)`. In the paper, suggested values range from 3e-4 to 2e-3,
-            depending on the size of the model. See [Truncation Sampling as Language Model
+            depending on the size of the model. Values outside [0, 1) are ignored and flagged by `validate()`. See [Truncation Sampling as Language Model
             Desmoothing](https://huggingface.co/papers/2210.15191) for more details.
         repetition_penalty (`float`, *optional*):
-            The parameter for repetition penalty. 1.0 means no penalty. See [this
+            The parameter for repetition penalty. Must be strictly positive; 1.0 means no penalty. See [this
             paper](https://huggingface.co/papers/1909.05858) for more details.
         encoder_repetition_penalty (`float`, *optional*):
             The parameter for encoder_repetition_penalty. An exponential penalty on sequences that are not in the
-            original input. 1.0 means no penalty.
+            original input. Must be strictly positive; 1.0 means no penalty.
         length_penalty (`float`, *optional*):
             Exponential penalty to the length that is used with beam-based generation. It is applied as an exponent to
             the sequence length, which in turn is used to divide the score of the sequence. Since the score is the log
@@ -265,7 +265,7 @@ class GenerationConfig(PushToHubMixin):
             This enhances the quality of completions for prompts affected by greedy tokenization bias.
         guidance_scale (`float`, *optional*):
             The guidance scale for classifier free guidance (CFG). CFG is enabled by setting `guidance_scale > 1`.
-            Higher guidance scale encourages the model to generate samples that are more closely linked to the input
+            Values below 1 are invalid (1 disables CFG). Higher guidance scale encourages the model to generate samples that are more closely linked to the input
             prompt, usually at the expense of poorer quality.
         watermarking_config (`BaseWatermarkingConfig` or `dict`, *optional*):
             Arguments used to watermark the model outputs by adding a small bias to randomly selected set of "green"
@@ -275,7 +275,7 @@ class GenerationConfig(PushToHubMixin):
         > Parameters that define the output variables of generate
 
         num_return_sequences (`int`, *optional*):
-            The number of independently computed returned sequences for each element in the batch.
+            The number of independently computed returned sequences for each element in the batch. Must be at least 1.
         output_attentions (`bool`):
             Whether or not to return the attentions tensors of all attention layers. See `attentions` under returned
             tensors for more details.
@@ -674,6 +674,22 @@ class GenerationConfig(PushToHubMixin):
                 f"`assistant_ensemble_weight` must be in the open interval `(0.0, 1.0)`, "
                 f"but is {self.assistant_ensemble_weight}. Use `None` for standard (lossless) speculative decoding."
             )
+        # Unlike the sampling-only ranges checked in 2.8 below, these gates are mode-independent: an invalid value
+        # here breaks `generate()` in every mode, so we always raise.
+        if self.repetition_penalty is not None and self.repetition_penalty <= 0:
+            raise ValueError(
+                f"`repetition_penalty` must be strictly positive, but is {self.repetition_penalty}. "
+                "`RepetitionPenaltyLogitsProcessor` requires a strictly positive penalty (1.0 means no penalty)."
+            )
+        if self.encoder_repetition_penalty is not None and self.encoder_repetition_penalty <= 0:
+            raise ValueError(
+                f"`encoder_repetition_penalty` must be strictly positive, but is {self.encoder_repetition_penalty}. "
+                "`EncoderRepetitionPenaltyLogitsProcessor` requires a strictly positive penalty (1.0 means no penalty)."
+            )
+        if self.num_beams is not None and self.num_beams < 1:
+            raise ValueError(f"`num_beams` must be at least 1 (1 means no beam search), but is {self.num_beams}.")
+        if self.num_return_sequences is not None and self.num_return_sequences < 1:
+            raise ValueError(f"`num_return_sequences` must be at least 1, but is {self.num_return_sequences}.")
         if self.pad_token_id is not None and self.pad_token_id < 0:
             minor_issues["pad_token_id"] = (
                 f"`pad_token_id` should be positive but got {self.pad_token_id}. This will cause errors when batch "
@@ -845,6 +861,81 @@ class GenerationConfig(PushToHubMixin):
                         f"either `{forced_attr}` or `suppress_tokens` (if you meant to prevent an early EOS token, use "
                         "`min_new_tokens` instead)."
                     )
+
+        # 2.8. numeric ranges of sampling/penalty parameters. Each bound mirrors the runtime `LogitsProcessor`
+        # check plus the gate that instantiates it in `_get_logits_processor`. Crash-guaranteed values raise in
+        # sampling mode, silently-ignored ones warn. Runs after 2.1 on purpose, so these specific messages win
+        # over the generic greedy-mode message for the same flag.
+        sampling_mode = self.do_sample is True
+
+        def _report_range_issue(attribute_name, issue_description, fatal_in_sampling_mode):
+            if sampling_mode and fatal_in_sampling_mode:
+                raise ValueError(issue_description)
+            minor_issues[attribute_name] = issue_description
+
+        if self.temperature is not None and self.temperature <= 0:
+            _report_range_issue(
+                "temperature",
+                f"`temperature` must be strictly positive, but is {self.temperature}. "
+                "`TemperatureLogitsWarper` requires a strictly positive float.",
+                fatal_in_sampling_mode=True,
+            )
+        if self.top_k is not None and self.top_k < 0:
+            _report_range_issue(
+                "top_k",
+                f"`top_k` must be 0 (disabled) or a positive integer, but is {self.top_k}. "
+                "`TopKLogitsWarper` requires a strictly positive integer.",
+                fatal_in_sampling_mode=True,
+            )
+        if self.top_p is not None and (self.top_p <= 0 or self.top_p > 1):
+            _report_range_issue(
+                "top_p",
+                f"`top_p` must be in the (0, 1] interval, but is {self.top_p}. Values <= 0 crash "
+                "`TopPLogitsWarper`, values > 1 are silently ignored.",
+                fatal_in_sampling_mode=self.top_p <= 0,
+            )
+        if self.min_p is not None and not 0 <= self.min_p <= 1:
+            _report_range_issue(
+                "min_p",
+                f"`min_p` must be in the [0, 1] interval, but is {self.min_p}. "
+                "`MinPLogitsWarper` requires a float in [0, 1].",
+                fatal_in_sampling_mode=True,
+            )
+        if self.top_h is not None and not 0 < self.top_h <= 1:
+            _report_range_issue(
+                "top_h",
+                f"`top_h` must be in the (0, 1] interval, but is {self.top_h}. "
+                "`TopHLogitsWarper` requires a value in (0, 1].",
+                fatal_in_sampling_mode=True,
+            )
+        if self.typical_p is not None and (self.typical_p <= 0 or self.typical_p > 1):
+            _report_range_issue(
+                "typical_p",
+                f"`typical_p` must be in the (0, 1] interval, but is {self.typical_p}. Values <= 0 crash "
+                "`TypicalLogitsWarper`, values > 1 are silently ignored.",
+                fatal_in_sampling_mode=self.typical_p <= 0,
+            )
+        if self.epsilon_cutoff is not None and not 0 <= self.epsilon_cutoff < 1:
+            _report_range_issue(
+                "epsilon_cutoff",
+                f"`epsilon_cutoff` must be 0 (disabled) or in the (0, 1) interval, but is {self.epsilon_cutoff}. "
+                "Out-of-range values are silently ignored.",
+                fatal_in_sampling_mode=False,
+            )
+        if self.eta_cutoff is not None and not 0 <= self.eta_cutoff < 1:
+            _report_range_issue(
+                "eta_cutoff",
+                f"`eta_cutoff` must be 0 (disabled) or in the (0, 1) interval, but is {self.eta_cutoff}. "
+                "Out-of-range values are silently ignored.",
+                fatal_in_sampling_mode=False,
+            )
+        if self.guidance_scale is not None and self.guidance_scale < 1:
+            _report_range_issue(
+                "guidance_scale",
+                f"`guidance_scale` must be > 1 to enable classifier-free guidance (1 disables it), but is "
+                f"{self.guidance_scale}. Smaller values crash the guidance processor in standard `generate()`.",
+                fatal_in_sampling_mode=False,
+            )
 
         # 3. Check common issue: passing `generate` arguments inside the generation config
         generate_arguments = (
