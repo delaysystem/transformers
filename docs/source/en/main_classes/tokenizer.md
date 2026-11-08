@@ -27,7 +27,7 @@ Rust library [🤗 Tokenizers](https://github.com/huggingface/tokenizers). The "
 The base classes [`PreTrainedTokenizer`] and [`PreTrainedTokenizerFast`]
 implement the common methods for encoding string inputs in model inputs (see below) and instantiating/saving python and
 "Fast" tokenizers either from a local file or directory or from a pretrained tokenizer provided by the library
-(downloaded from HuggingFace's AWS S3 repository). They both rely on
+(downloaded from the Hugging Face Hub). They both rely on
 [`~tokenization_utils_base.PreTrainedTokenizerBase`] that contains the common methods.
 
 [`PreTrainedTokenizer`] and [`PreTrainedTokenizerFast`] thus implement the main
