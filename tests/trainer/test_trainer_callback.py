@@ -1297,6 +1297,15 @@ class EarlyStoppingCallbackTest(unittest.TestCase):
         self.assertEqual(state["args"]["early_stopping_threshold"], 0.1)
         self.assertEqual(state["attributes"]["early_stopping_patience_counter"], 3)
 
+    def test_patience_must_be_at_least_one(self):
+        """Patience below 1 would stop training after the first eval even when the metric improved."""
+        with self.assertRaises(ValueError):
+            EarlyStoppingCallback(early_stopping_patience=0)
+        with self.assertRaises(ValueError):
+            EarlyStoppingCallback(early_stopping_patience=-1)
+        # Boundary value must not raise.
+        EarlyStoppingCallback(early_stopping_patience=1)
+
 
 class ExportableStateTest(unittest.TestCase):
     """Tests for ExportableState interface."""

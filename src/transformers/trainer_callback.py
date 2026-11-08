@@ -715,7 +715,7 @@ class EarlyStoppingCallback(TrainerCallback, ExportableState):
     Args:
         early_stopping_patience (`int`):
             Use with `metric_for_best_model` to stop training when the specified metric worsens for
-            `early_stopping_patience` evaluation calls.
+            `early_stopping_patience` evaluation calls. Must be at least 1.
         early_stopping_threshold(`float`, *optional*):
             Use with TrainingArguments `metric_for_best_model` and `early_stopping_patience` to denote how much the
             specified metric must improve to satisfy early stopping conditions. `
@@ -726,6 +726,11 @@ class EarlyStoppingCallback(TrainerCallback, ExportableState):
     """
 
     def __init__(self, early_stopping_patience: int = 1, early_stopping_threshold: float | None = 0.0):
+        if early_stopping_patience < 1:
+            raise ValueError(
+                f"`early_stopping_patience` must be at least 1, got {early_stopping_patience}. With a patience "
+                "below 1, training would stop after the first evaluation even when the metric improved."
+            )
         self.early_stopping_patience = early_stopping_patience
         self.early_stopping_threshold = early_stopping_threshold
         # early_stopping_patience_counter denotes the number of times validation metrics failed to improve.
