@@ -20,6 +20,7 @@ import tempfile
 import unittest
 import warnings
 
+import numpy as np
 from huggingface_hub import create_pull_request
 from parameterized import parameterized
 
@@ -451,6 +452,79 @@ class GenerationConfigTest(unittest.TestCase):
         GenerationConfig(repetition_penalty=1.0, encoder_repetition_penalty=2.0).validate()
         GenerationConfig(num_beams=1, num_return_sequences=1).validate()
         GenerationConfig(do_sample=True, num_beams=4, num_return_sequences=2).validate()
+
+    def test_validate_length_constraints(self):
+        """
+        Unfeasible length combinations warn eagerly at construction time, mirroring the `UserWarning`s `generate()`
+        emits in `_prepare_generation_config`. Negative length/ngram values (silently ignored at runtime) warn too.
+        """
+        logger = transformers_logging.get_logger("transformers.generation.configuration_utils")
+
+        def _warn_count(fn):
+            logger.warning_once.cache_clear()
+            with CaptureLogger(logger) as captured:
+                fn()
+            return len(captured.out)
+
+        # Unfeasible combinations warn (never raise: `generate()` only warns about them either).
+        self.assertNotEqual(_warn_count(lambda: GenerationConfig(min_length=10, max_length=5)), 0)
+        self.assertNotEqual(_warn_count(lambda: GenerationConfig(min_new_tokens=10, max_new_tokens=5)), 0)
+
+        # Negative values are silently ignored at runtime -> warn.
+        self.assertNotEqual(_warn_count(lambda: GenerationConfig(min_length=-1)), 0)
+        self.assertNotEqual(_warn_count(lambda: GenerationConfig(min_new_tokens=-2)), 0)
+        self.assertNotEqual(_warn_count(lambda: GenerationConfig(no_repeat_ngram_size=-1)), 0)
+        self.assertNotEqual(_warn_count(lambda: GenerationConfig(encoder_no_repeat_ngram_size=-3)), 0)
+
+        # Setting both maxima warns (`max_new_tokens` takes precedence) -- but only when both were
+        # explicitly provided, so configs inheriting one of them from a checkpoint stay silent.
+        self.assertNotEqual(_warn_count(lambda: GenerationConfig(max_new_tokens=50, max_length=100)), 0)
+        self.assertEqual(_warn_count(lambda: GenerationConfig(max_new_tokens=50)), 0)
+        self.assertEqual(_warn_count(lambda: GenerationConfig(max_length=100)), 0)
+
+        def case_hub_max_length_user_max_new_tokens():
+            cfg = GenerationConfig(max_length=100)  # stands in for the hub default
+            cfg.update(max_new_tokens=50)
+
+        self.assertEqual(_warn_count(case_hub_max_length_user_max_new_tokens), 0)
+
+        # Feasible combinations (including min == max) stay silent.
+        self.assertEqual(_warn_count(lambda: GenerationConfig(min_length=5, max_length=10)), 0)
+        self.assertEqual(_warn_count(lambda: GenerationConfig(min_length=5, max_length=5)), 0)
+        self.assertEqual(_warn_count(lambda: GenerationConfig(min_new_tokens=5, max_new_tokens=10)), 0)
+        self.assertEqual(_warn_count(lambda: GenerationConfig(min_length=5)), 0)
+        self.assertEqual(_warn_count(lambda: GenerationConfig(no_repeat_ngram_size=0)), 0)
+        self.assertEqual(_warn_count(lambda: GenerationConfig(no_repeat_ngram_size=3)), 0)
+
+        # ... and `strict=True` escalates those warnings to errors.
+        config = GenerationConfig(min_length=10, max_length=5)
+        with self.assertRaises(ValueError):
+            config.validate(strict=True)
+
+    def test_validate_bad_words_ids(self):
+        """
+        `NoBadWordsLogitsProcessor` is instantiated whenever `bad_words_ids` is set, in every generation mode, so a
+        malformed value crashes `generate()` unconditionally. `validate` mirrors its checks eagerly, with the same
+        accepted types (including numpy integers).
+        """
+        # Malformed values raise in every mode (and with sampling unset).
+        invalid_cases = (
+            {"bad_words_ids": []},
+            {"bad_words_ids": "foo"},
+            {"bad_words_ids": [[1, 2], "bar"]},
+            {"bad_words_ids": [[1, -2]]},
+            {"bad_words_ids": [[1.5]]},
+            {"bad_words_ids": [[None]]},
+        )
+        for kwargs in invalid_cases:
+            for mode in ({}, {"do_sample": True}, {"do_sample": False}):
+                with self.assertRaises(ValueError, msg=f"{kwargs} with {mode} must raise"):
+                    GenerationConfig(**{**mode, **kwargs})
+
+        # Well-formed values (plain ints, numpy ints, 0) construct fine.
+        GenerationConfig(bad_words_ids=[[1, 2, 3], [4, 5]]).validate()
+        GenerationConfig(bad_words_ids=[[0]]).validate()
+        GenerationConfig(bad_words_ids=[[np.int64(7)]]).validate()
 
     def test_refuse_to_save(self):
         """Tests that we refuse to save a generation config that fails validation."""

@@ -22,6 +22,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, is_dataclass
 from typing import TYPE_CHECKING, Any, Optional, Union
 
+import numpy as np
+
 from .. import __version__
 from ..utils import (
     GENERATION_CONFIG_NAME,
@@ -124,15 +126,17 @@ class GenerationConfig(PushToHubMixin):
 
         max_length (`int`, *optional*):
             `max_new_tokens` is recommended for controlling how many tokens the model generates.
-            `max_length` remains for backward compatibility.
-
+            `max_length` remains for backward compatibility. If `max_new_tokens` is also set, it takes precedence.
         max_new_tokens (`int`, *optional*):
-            The maximum numbers of tokens to generate, ignoring the number of tokens in the prompt.
+            The maximum numbers of tokens to generate, ignoring the number of tokens in the prompt. Takes precedence
+            over `max_length` when both are set.
         min_length (`int`, *optional*):
             The minimum length of the sequence to be generated. Corresponds to the length of the input prompt +
-            `min_new_tokens`. Its effect is overridden by `min_new_tokens`, if also set.
+            `min_new_tokens`. Its effect is overridden by `min_new_tokens`, if also set. Must be >= 0 (negative
+            values are ignored) and must not exceed `max_length` when both are set.
         min_new_tokens (`int`, *optional*):
-            The minimum numbers of tokens to generate, ignoring the number of tokens in the prompt.
+            The minimum numbers of tokens to generate, ignoring the number of tokens in the prompt. Must be >= 0
+            (negative values are ignored) and must not exceed `max_new_tokens` when both are set.
         early_stopping (`bool` or `str`, *optional*):
             Controls the stopping condition for beam-based methods, like beam-search. It accepts the following values:
             `True`, where the generation stops as soon as there are `num_beams` complete candidates; `False`, where an
@@ -228,10 +232,11 @@ class GenerationConfig(PushToHubMixin):
             likelihood of the sequence (i.e. negative), `length_penalty` > 0.0 promotes longer sequences, while
             `length_penalty` < 0.0 encourages shorter sequences.
         no_repeat_ngram_size (`int`, *optional*):
-            If set to int > 0, all ngrams of that size can only occur once.
+            If set to int > 0, all ngrams of that size can only occur once. Negative values are ignored and flagged
+            by `validate()`.
         bad_words_ids (`list[list[int]]`, *optional*):
-            List of list of token ids that are not allowed to be generated. Check
-            [`~generation.NoBadWordsLogitsProcessor`] for further documentation and examples.
+            List of list of token ids that are not allowed to be generated. Must be a non-empty list of lists of
+            token ids. Check [`~generation.NoBadWordsLogitsProcessor`] for further documentation and examples.
         renormalize_logits (`bool`):
             Whether to renormalize the logits after applying all the logits processors (including the custom
             ones). It's highly recommended to set this flag to `True` as the search algorithms suppose the score logits
@@ -305,7 +310,7 @@ class GenerationConfig(PushToHubMixin):
 
         encoder_no_repeat_ngram_size (`int`, *optional*):
             If set to int > 0, all ngrams of that size that occur in the `encoder_input_ids` cannot occur in the
-            `decoder_input_ids`.
+            `decoder_input_ids`. Negative values are ignored and flagged by `validate()`.
         decoder_start_token_id (`int` or `list[int]`, *optional*):
             If an encoder-decoder model starts decoding with a different token than *bos*, the id of that token or a list of length
             `batch_size`. Indicating a list enables different start ids for each element in the batch
@@ -690,6 +695,20 @@ class GenerationConfig(PushToHubMixin):
             raise ValueError(f"`num_beams` must be at least 1 (1 means no beam search), but is {self.num_beams}.")
         if self.num_return_sequences is not None and self.num_return_sequences < 1:
             raise ValueError(f"`num_return_sequences` must be at least 1, but is {self.num_return_sequences}.")
+        # `NoBadWordsLogitsProcessor` is instantiated whenever `bad_words_ids` is set, in every generation mode,
+        # so a malformed value crashes `generate()` unconditionally -- mirror its checks eagerly.
+        if self.bad_words_ids is not None:
+            if not isinstance(self.bad_words_ids, list) or len(self.bad_words_ids) == 0:
+                raise ValueError(f"`bad_words_ids` has to be a non-empty list, but is {self.bad_words_ids}.")
+            if any(not isinstance(bad_word_ids, list) for bad_word_ids in self.bad_words_ids):
+                raise ValueError(f"`bad_words_ids` has to be a list of lists, but is {self.bad_words_ids}.")
+            if any(
+                any(not isinstance(token_id, (int, np.integer)) or token_id < 0 for token_id in bad_word_ids)
+                for bad_word_ids in self.bad_words_ids
+            ):
+                raise ValueError(
+                    f"Each list in `bad_words_ids` has to be a list of positive integers, but is {self.bad_words_ids}."
+                )
         if self.pad_token_id is not None and self.pad_token_id < 0:
             minor_issues["pad_token_id"] = (
                 f"`pad_token_id` should be positive but got {self.pad_token_id}. This will cause errors when batch "
@@ -935,6 +954,63 @@ class GenerationConfig(PushToHubMixin):
                 f"`guidance_scale` must be > 1 to enable classifier-free guidance (1 disables it), but is "
                 f"{self.guidance_scale}. Smaller values crash the guidance processor in standard `generate()`.",
                 fatal_in_sampling_mode=False,
+            )
+
+        # 2.9. length constraints. `generate()` only warns about unfeasible combinations (see
+        # `_prepare_generation_config` in `generation/utils.py`), so we warn here as well -- but eagerly, at
+        # construction time, where the offending values are still attributed to the config.
+        if self.min_length is not None and self.max_length is not None and self.min_length > self.max_length:
+            minor_issues["min_length"] = (
+                f"Unfeasible length constraints: `min_length` ({self.min_length}) is larger than the maximum "
+                f"possible length ({self.max_length}). Generation will stop at the maximum length; decrease the "
+                "minimum length and/or increase the maximum length."
+            )
+        if (
+            self.min_new_tokens is not None
+            and self.max_new_tokens is not None
+            and self.min_new_tokens > self.max_new_tokens
+        ):
+            minor_issues["min_new_tokens"] = (
+                f"Unfeasible length constraints: `min_new_tokens` ({self.min_new_tokens}) is larger than "
+                f"`max_new_tokens` ({self.max_new_tokens}). Generation will stop at the maximum length; decrease "
+                "the minimum length and/or increase the maximum length."
+            )
+        if self.min_length is not None and self.min_length < 0:
+            minor_issues["min_length"] = (
+                f"`min_length` is {self.min_length}, but negative values are silently ignored "
+                "(`MinLengthLogitsProcessor` is only applied when `min_length` > 0). Use 0 or a positive integer."
+            )
+        if self.min_new_tokens is not None and self.min_new_tokens < 0:
+            minor_issues["min_new_tokens"] = (
+                f"`min_new_tokens` is {self.min_new_tokens}, but negative values are silently ignored "
+                "(`MinNewTokensLengthLogitsProcessor` is only applied when `min_new_tokens` > 0). Use 0 or a "
+                "positive integer."
+            )
+        if self.no_repeat_ngram_size is not None and self.no_repeat_ngram_size < 0:
+            minor_issues["no_repeat_ngram_size"] = (
+                f"`no_repeat_ngram_size` is {self.no_repeat_ngram_size}, but negative values are silently ignored "
+                "(`NoRepeatNGramLogitsProcessor` is only applied when `no_repeat_ngram_size` > 0). Use 0 or a "
+                "positive integer."
+            )
+        if self.encoder_no_repeat_ngram_size is not None and self.encoder_no_repeat_ngram_size < 0:
+            minor_issues["encoder_no_repeat_ngram_size"] = (
+                f"`encoder_no_repeat_ngram_size` is {self.encoder_no_repeat_ngram_size}, but negative values are "
+                "silently ignored (`EncoderNoRepeatNGramLogitsProcessor` is only applied when "
+                "`encoder_no_repeat_ngram_size` > 0). Use 0 or a positive integer."
+            )
+        # Both maxima explicitly set: `max_new_tokens` takes precedence at runtime (see
+        # `_prepare_generated_length`). Only warn when both were explicitly provided, so configs inheriting one of
+        # them from a checkpoint stay silent.
+        if (
+            self.max_new_tokens is not None
+            and self.max_length is not None
+            and user_set_attributes is not None
+            and "max_new_tokens" in user_set_attributes
+            and "max_length" in user_set_attributes
+        ):
+            minor_issues["max_length"] = (
+                f"Both `max_new_tokens` (={self.max_new_tokens}) and `max_length`(={self.max_length}) seem to have "
+                "been set. `max_new_tokens` will take precedence."
             )
 
         # 3. Check common issue: passing `generate` arguments inside the generation config
