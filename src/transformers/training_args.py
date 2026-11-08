@@ -260,7 +260,7 @@ class TrainingArguments:
         gradient_accumulation_steps (`int`, *optional*, defaults to 1):
             Number of update steps to accumulate gradients before performing a backward/update pass.
             Simulates larger batch sizes without additional memory. Effective batch size =
-            `per_device_train_batch_size × num_devices × gradient_accumulation_steps`.
+            `per_device_train_batch_size × num_devices × gradient_accumulation_steps`. Must be at least 1.
             > [!TIP]
             > When using gradient accumulation, one "step" is counted as one step with a backward pass. Therefore, logging, evaluation, and saving will occur every `gradient_accumulation_steps × xxx_step` training examples.
         average_tokens_across_devices (`bool`, *optional*, defaults to `True`):
@@ -365,7 +365,7 @@ class TrainingArguments:
                 - `"steps"`: Logging is done every `logging_steps`.
         logging_steps (`int` or `float`, *optional*, defaults to 500):
             Number of update steps between two logs if `logging_strategy="steps"`. Should be an integer or a float in
-            range `[0,1)`. If smaller than 1, will be interpreted as ratio of total training steps.
+            range `(0,1)`. If smaller than 1, will be interpreted as ratio of total training steps.
         logging_first_step (`bool`, *optional*, defaults to `False`):
             Whether to log the first `global_step` or not.
         log_on_each_node (`bool`, *optional*, defaults to `True`):
@@ -430,7 +430,7 @@ class TrainingArguments:
             - `"epoch"`: Evaluate at the end of each epoch
         eval_steps (`int` or `float`, *optional*):
             Number of update steps between two evaluations if `eval_strategy="steps"`. Will default to the same
-            value as `logging_steps` if not set. Should be an integer or a float in range `[0,1)`. If smaller than 1,
+            value as `logging_steps` if not set. Should be an integer or a float in range `(0,1)`. If smaller than 1,
             will be interpreted as ratio of total training steps.
         eval_delay (`float`, *optional*):
             Number of epochs or steps to wait for before the first evaluation can be performed, depending on the
@@ -450,7 +450,7 @@ class TrainingArguments:
         eval_accumulation_steps (`int`, *optional*):
             Number of predictions steps to accumulate the output tensors for, before moving the results to the CPU. If
             left unset, the whole predictions are accumulated on the device accelerator before being moved to the CPU (faster but
-            requires more memory).
+            requires more memory). Must be at least 1 when set.
 
         > Metrics Computation
 
@@ -480,7 +480,8 @@ class TrainingArguments:
                 - `"best"`: Save is done whenever a new `best_metric` is achieved.
         save_steps (`int` or `float`, *optional*, defaults to 500):
             Number of updates steps before two checkpoint saves if `save_strategy="steps"`. Should be an integer or a
-            float in range `[0,1)`. If smaller than 1, will be interpreted as ratio of total training steps.
+            float in range `(0,1)`. If smaller than 1, will be interpreted as ratio of total training steps. Must be
+            non-zero when `save_strategy="steps"`.
         save_on_each_node (`bool`, *optional*, defaults to `False`):
             When doing multi-node distributed training, whether to save models and checkpoints on each node, or only on
             the main one.
@@ -1731,6 +1732,21 @@ class TrainingArguments:
         # logging_steps must be non-zero when logging_strategy="steps"
         if self.logging_strategy == IntervalStrategy.STEPS and self.logging_steps == 0:
             raise ValueError(f"logging strategy {self.logging_strategy} requires non-zero --logging_steps")
+
+        # save_steps must be non-zero when save_strategy="steps": zero would silently disable
+        # checkpoint saving (the save guard requires state.save_steps > 0).
+        if self.save_strategy == SaveStrategy.STEPS and self.save_steps == 0:
+            raise ValueError(f"save strategy {self.save_strategy} requires non-zero --save_steps")
+
+        # Accumulation steps feed integer division and modulo in the train and eval loops.
+        if self.gradient_accumulation_steps < 1:
+            raise ValueError(
+                f"Got gradient_accumulation_steps = {self.gradient_accumulation_steps}, expected a value >= 1."
+            )
+        if self.eval_accumulation_steps is not None and self.eval_accumulation_steps < 1:
+            raise ValueError(
+                f"Got eval_accumulation_steps = {self.eval_accumulation_steps}, expected a value >= 1 or None."
+            )
 
         if self.logging_strategy == IntervalStrategy.STEPS and self.logging_steps > 1:
             if self.logging_steps != int(self.logging_steps):

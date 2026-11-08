@@ -181,6 +181,45 @@ class TestTrainingArguments(unittest.TestCase):
                 report_to=None,
             )
 
+    def test_save_steps_required_nonzero(self):
+        """Test that save_strategy='steps' with save_steps=0 raises ValueError (it would silently never save)."""
+        with self.assertRaisesRegex(ValueError, r"non-zero --save_steps"):
+            TrainingArguments(
+                output_dir="tmp",
+                save_strategy="steps",
+                save_steps=0,
+                report_to=None,
+            )
+        # Zero save_steps is fine when periodic saving is off.
+        args = TrainingArguments(
+            output_dir="tmp",
+            save_strategy="no",
+            save_steps=0,
+            report_to=None,
+        )
+        self.assertEqual(args.save_steps, 0)
+
+    def test_accumulation_steps_must_be_positive(self):
+        """Test that zero/negative accumulation steps raise ValueError (they crash the loops)."""
+        with self.assertRaisesRegex(ValueError, r"gradient_accumulation_steps"):
+            TrainingArguments(output_dir="tmp", gradient_accumulation_steps=0, report_to=None)
+        with self.assertRaisesRegex(ValueError, r"gradient_accumulation_steps"):
+            TrainingArguments(output_dir="tmp", gradient_accumulation_steps=-1, report_to=None)
+        with self.assertRaisesRegex(ValueError, r"eval_accumulation_steps"):
+            TrainingArguments(output_dir="tmp", eval_accumulation_steps=0, report_to=None)
+
+        # Boundary values and the unset (None) eval default stay valid.
+        args = TrainingArguments(
+            output_dir="tmp",
+            gradient_accumulation_steps=1,
+            eval_accumulation_steps=1,
+            report_to=None,
+        )
+        self.assertEqual(args.gradient_accumulation_steps, 1)
+        self.assertEqual(args.eval_accumulation_steps, 1)
+        args = TrainingArguments(output_dir="tmp", report_to=None)
+        self.assertIsNone(args.eval_accumulation_steps)
+
     def test_steps_must_be_integer_when_greater_than_one(self):
         """Test that fractional steps >1 raise ValueError, but <=1 are allowed."""
         with self.assertRaises(ValueError):
