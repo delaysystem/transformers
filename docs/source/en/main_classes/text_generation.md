@@ -16,9 +16,8 @@ rendered properly in your Markdown viewer.
 
 # Generation
 
-Each framework has a generate method for text generation implemented in their respective `GenerationMixin` class:
-
-- PyTorch [`~generation.GenerationMixin.generate`] is implemented in [`~generation.GenerationMixin`].
+PyTorch text generation is implemented in the [`~generation.GenerationMixin`] class, which provides the
+[`~generation.GenerationMixin.generate`] method.
 
 You can parameterize the generate method with a [`~generation.GenerationConfig`] class instance. Please refer to this class for the complete list of generation parameters, which control the behavior of the generation method.
 
