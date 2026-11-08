@@ -96,6 +96,38 @@ tokenizer.batch_decode(outputs, skip_special_tokens=True)
 "['Hugging Face is an open-source company that develops and maintains the Hugging Face platform, which is a collection of tools and libraries for building and deploying natural language processing (NLP) models. Hugging Face was founded in 2018 by Thomas Wolf']"
 ```
 
+## Inspecting, customizing, saving, and validating generation configs
+
+Every generative model carries its decoding defaults in a [`~generation.GenerationConfig`], loaded from the model's `generation_config.json` file when one is published with the checkpoint. Inspect it through the model:
+
+```py
+model.generation_config
+```
+
+There are two ways to change parameters. For a one-off call, pass them directly to `generate` — they override the config for that call only:
+
+```py
+outputs = model.generate(**inputs, do_sample=True, temperature=0.7, max_new_tokens=50)
+```
+
+To change the model's config itself (for example before saving it), update it in place:
+
+```py
+model.generation_config.update(do_sample=True, temperature=0.7)
+```
+
+Save a customized config with [`~generation.GenerationConfig.save_pretrained`] and reload it later with [`~generation.GenerationConfig.from_pretrained`]. This writes a `generation_config.json` file next to the model files, so anyone loading the model picks up your defaults:
+
+```py
+model.generation_config.save_pretrained("./my-custom-config")
+```
+
+Every `GenerationConfig` is validated when it is created. Impossible combinations (such as requesting several sequences from greedy decoding without beam search) raise an error immediately, while suspicious but non-fatal combinations log a short warning — set `TRANSFORMERS_VERBOSITY=info` to see the full explanation. Saving is strict: a config you modified is refused until its issues are fixed, while a config loaded unchanged from a checkpoint always saves back cleanly. You can run the same check explicitly with [`~generation.GenerationConfig.validate`], passing `strict=True` to turn warnings into errors:
+
+```py
+model.generation_config.validate(strict=True)
+```
+
 ## Custom generation methods
 
 Custom generation methods enable specialized behavior such as:
